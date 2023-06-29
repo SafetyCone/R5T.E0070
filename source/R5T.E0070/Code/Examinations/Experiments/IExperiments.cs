@@ -7,7 +7,13 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
+using R5T.F0000.Extensions;
 using R5T.T0141;
+using R5T.T0161.Extensions;
+using R5T.T0172;
+using R5T.T0172.Extensions;
+using R5T.T0179.Extensions;
+using R5T.T0208;
 
 
 namespace R5T.E0070
@@ -15,6 +21,337 @@ namespace R5T.E0070
     [ExperimentsMarker]
     public partial interface IExperiments : IExperimentsMarker
     {
+        /// <summary>
+        /// Select a method in a target project, then find all project references required for that method.
+        /// </summary>
+        /// <remarks>
+        /// Note that methods always live in a type, and that type exists within an assembly.
+        /// NuGet packages:
+        ///     Assume that NuGet packages are always supplied via a project reference (i.e. that the target project contains no NuGet packages relevant to the method).
+        ///     Use the least dependent project reference for a NuGet package on the assumption that all NuGet packages are supplied via specific package selector projects.
+        /// </remarks>
+        public async Task Get_ProjectsUsedByMethod03()
+        {
+            /// Inputs.
+            var projectFilePath =
+                //Instances.ExampleProjectPaths.Example_SimpleWithProjectReference
+                //Instances.ExampleProjectPaths.Example_SimpleWithNuGetPackageReference
+                //Instances.ExampleProjectPaths.Example_SimpleWithNuGetPackageProviderProjectReference
+                @"C:\Code\DEV\Git\GitHub\SafetyCone\R5T.O0026\source\R5T.O0026.Construction\R5T.O0026.Construction.csproj".ToProjectFilePath()
+                ;
+            var outputTextFilePath =
+                Instances.Paths.OutputTextFilePath
+                ;
+
+            Task<MethodDeclarationSyntax> methodDeclarationSelector(Project project) =>
+                Instances.SyntaxOperations.Get_MethodOnType(
+                    project,
+                    //"Program"
+                    "IProjectFilePathDemonstrations"
+                    .ToTypeName_N1(),
+                    //"Main"
+                    "Get_BackupProjectFilePath"
+                    .ToMethodName_N1()
+                );
+
+
+            /// Run.
+            // Get a mapping of NuGet packages-to-containing project for all NuGet packages referenced by all recursive project references.
+            // If there are multiple NuGet package references for the same NuGet package name, make sure we evalulate projects in dependency order (from least dependent to most dependent) so we can use the least dependent.
+            var recursiveProjectReferencesInDependencyOrder = await Instances.ProjectFileOperations.Get_RecursiveProjectReferences_InDependencyOrder(projectFilePath);
+
+            var containingProjectsByPackageReference = new Dictionary<PackageReference, IProjectFilePath>(
+                // Only compare on name, not including version.
+                PackageReferenceNameEqualityComparer.Instance);
+
+            foreach (var projectReference in recursiveProjectReferencesInDependencyOrder)
+            {
+                var packageReferences = await Instances.ProjectFileOperations.Get_PackageReferences(projectReference);
+                foreach (var packageReference in packageReferences)
+                {
+                    // Since recursive project references are evaluated in ascending depdendency order, later projects will have more depenencies that earlier projects.
+                    // Use the least dependent dependency since on the assumption that it is a specific package selector project.
+                    containingProjectsByPackageReference.Add_IfKeyNotFound(packageReference, projectReference);
+                }
+            }
+
+            var containingProjectsByPackageIdentityName = containingProjectsByPackageReference
+                .ToDictionary(
+                    // The package identity name is the lowered packge name.
+                    x => x.Key.Identity.ToLowerInvariant(),
+                    x => x.Value);
+
+            var methodProjectReferences = new HashSet<IProjectFilePath>();
+
+            await Instances.SemanticsOperator.In_ProjectContext(
+                projectFilePath,
+                ProjectOperation);
+
+            async Task ProjectOperation(Project project)
+            {
+                var solution = project.Solution;
+
+                var compilation = await project.GetCompilationAsync();
+
+                var method = await methodDeclarationSelector(project);
+
+                var methodSemanticModel = compilation.GetSemanticModel(method.SyntaxTree);
+
+                var symbolInfos = Get_SymbolInfos(
+                    method,
+                    methodSemanticModel);
+
+                foreach (var symbolInfo in symbolInfos)
+                {
+                    ProcessSymbolInfo(
+                        symbolInfo,
+                        solution,
+                        compilation,
+                        containingProjectsByPackageIdentityName,
+                        methodProjectReferences);
+                }
+
+                //// Or maybe just get all member access expressions?
+                //var memberAccesses = method.DescendantNodes()
+                //    .OfType<MemberAccessExpressionSyntax>()
+                //    ;
+
+                //    foreach (var memberAccess in memberAccesses)
+                //    {
+                //        var accessName = memberAccess.Name;
+
+                //        var accessSymbolInfo = methodSemanticModel.GetSymbolInfo(accessName);
+
+                //        var accessNameSymbol = accessSymbolInfo.Symbol;
+
+                //        var containingAssembly = accessNameSymbol.ContainingAssembly;
+
+                //        var accessLocation = accessNameSymbol.Locations.First();
+
+                //        var isSource = accessLocation.IsInSource;
+                //        if (isSource)
+                //        {
+                //            // If the accessed method declaration is in source, then the method was supplied by a project reference.
+                //            var containingAssemblyProject = solution.GetProject(
+                //                containingAssembly);
+
+                //            var containingAssemblyProjectFilePath = containingAssemblyProject.FilePath;
+
+                //            methodProjectReferences.Add(
+                //                containingAssemblyProjectFilePath.ToProjectFilePath());
+                //        }
+                //        else
+                //        {
+                //            // Else if the accessed method declaration is in metadata, then the method is assumed to be supplied by a NuGet package.
+                //            // (Note: it could have been a direct assembly reference, this is currently unhandled.)
+                //            var assemblyIdentity = containingAssembly.Identity;
+
+                //            var metadataReference = compilation.GetMetadataReference(containingAssembly);
+
+                //            if (metadataReference is PortableExecutableReference portableExecutableReference)
+                //            {
+                //                var metadataReferenceAssemblyFilePath = portableExecutableReference.FilePath.ToAssemblyFilePath();
+
+                //                // NuGet package reference file paths take the form:
+                //                //  C:\Users\David\.nuget\packages\cliwrap\3.6.3\lib\netcoreapp3.0\CliWrap.dll
+                //                // While .NET libraries take the form:
+                //                //  C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\6.0.16\ref\net6.0\Microsoft.CSharp.dll
+
+                //                var isDotnetAssembly = Instances.AssemblyFilePathOperator.Is_DotnetAssemblyFilePath(metadataReferenceAssemblyFilePath);
+                //                if(isDotnetAssembly)
+                //                {
+                //                    // Do nothing.
+                //                    continue;
+                //                }
+
+                //                var isNugetPackageAssembly = Instances.AssemblyFilePathOperator.Is_NuGetPackageAssemblyFilePath(metadataReferenceAssemblyFilePath);
+                //                if(isNugetPackageAssembly)
+                //                {
+                //                    // Get the package identity name.
+                //                    var packageIdentityName = Instances.AssemblyFilePathOperator.Get_NuGetPackageIdentityName(metadataReferenceAssemblyFilePath);
+
+                //                    // Lookup the containging project.
+                //                    if(containingProjectsByPackageIdentityName.ContainsKey(packageIdentityName))
+                //                    {
+                //                        var containingProjectFilePath = containingProjectsByPackageIdentityName[packageIdentityName];
+
+                //                        methodProjectReferences.Add(containingProjectFilePath);
+                //                    }
+                //                    else
+                //                    {
+                //                        var message = $"{packageIdentityName}: no containing project found for package identity name.";
+                //                        Console.WriteLine(message);
+                //                    }
+
+                //                    continue;
+                //                }
+
+                //                // Else, throw an exception since we have no idea what to do!
+                //                {
+                //                    var message = $"Unhandled metadata reference assembly:\n\t{metadataReferenceAssemblyFilePath}";
+                //                    Console.WriteLine(message);
+                //                    //throw new Exception();
+                //                }
+                //            }
+                //            else
+                //            {
+                //                // No idea what to do with the metadata reference assembly.
+                //                // This link: https://learn.microsoft.com/en-us/dotnet/api/microsoft.codeanalysis.metadatareference?view=roslyn-dotnet-4.3.0
+                //                // Suggests there are three possibilities:
+                //                //  1. Microsoft.CodeAnalysis.CompilationReference
+                //                //  2. Microsoft.CodeAnalysis.PortableExecutableReference
+                //                //  3. Microsoft.CodeAnalysis.UnresolvedMetadataReference
+                //                var message = $"{metadataReference.Display}: metadata reference assembly was not a {nameof(PortableExecutableReference)}";
+                //                Console.WriteLine(message);
+                //                //throw new Exception(message);
+                //            }
+                //        }
+                //    }
+            }
+
+            static IEnumerable<SymbolInfo> Get_SymbolInfos(
+                MethodDeclarationSyntax method,
+                SemanticModel semanticModel)
+            {
+                var memberAccessSymbolInfos = method.DescendantNodes()
+                    .OfType<MemberAccessExpressionSyntax>()
+                    .Select(memberAccess =>
+                    {
+                        var accessName = memberAccess.Name;
+
+                        var symbolInfo = semanticModel.GetSymbolInfo(accessName);
+                        return symbolInfo;
+                    })
+                    ;
+
+                var parameterSymbolInfos = method.DescendantNodes()
+                    .OfType<ParameterSyntax>()
+                    .Select(parameter =>
+                    {
+                        var typeName = parameter.Type;
+
+                        var symbolInfo = semanticModel.GetSymbolInfo(typeName);
+                        return symbolInfo;
+                    })
+                    ;
+
+                var symbolInfos = Instances.EnumerableOperator.From(
+                    memberAccessSymbolInfos,
+                    parameterSymbolInfos);
+
+                return symbolInfos;
+            }
+
+            static void ProcessSymbolInfo(
+                SymbolInfo symbolInfo,
+                Solution solution,
+                Compilation compilation,
+                IDictionary<string, IProjectFilePath> containingProjectsByPackageIdentityName,
+                HashSet<IProjectFilePath> methodProjectReferences)
+            {
+                var accessNameSymbol = symbolInfo.Symbol;
+
+                var containingAssembly = accessNameSymbol.ContainingAssembly;
+
+                var accessLocation = accessNameSymbol.Locations.First();
+
+                var isSource = accessLocation.IsInSource;
+                if (isSource)
+                {
+                    // If the accessed method declaration is in source, then the method was supplied by a project reference.
+                    var containingAssemblyProject = solution.GetProject(
+                        containingAssembly);
+
+                    var containingAssemblyProjectFilePath = containingAssemblyProject.FilePath;
+
+                    methodProjectReferences.Add(
+                        containingAssemblyProjectFilePath.ToProjectFilePath());
+                }
+                else
+                {
+                    // Else if the accessed method declaration is in metadata, then the method is assumed to be supplied by a NuGet package.
+                    // (Note: it could have been a direct assembly reference, this is currently unhandled.)
+                    var assemblyIdentity = containingAssembly.Identity;
+
+                    var metadataReference = compilation.GetMetadataReference(containingAssembly);
+
+                    if (metadataReference is PortableExecutableReference portableExecutableReference)
+                    {
+                        var metadataReferenceAssemblyFilePath = portableExecutableReference.FilePath.ToAssemblyFilePath();
+
+                        // NuGet package reference file paths take the form:
+                        //  C:\Users\David\.nuget\packages\cliwrap\3.6.3\lib\netcoreapp3.0\CliWrap.dll
+                        // While .NET libraries take the form:
+                        //  C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\6.0.16\ref\net6.0\Microsoft.CSharp.dll
+
+                        var isDotnetAssembly = Instances.AssemblyFilePathOperator.Is_DotnetAssemblyFilePath(metadataReferenceAssemblyFilePath);
+                        if (isDotnetAssembly)
+                        {
+                            // Do nothing.
+                            return;
+                        }
+
+                        var isNugetPackageAssembly = Instances.AssemblyFilePathOperator.Is_NuGetPackageAssemblyFilePath(metadataReferenceAssemblyFilePath);
+                        if (isNugetPackageAssembly)
+                        {
+                            // Get the package identity name.
+                            var packageIdentityName = Instances.AssemblyFilePathOperator.Get_NuGetPackageIdentityName(metadataReferenceAssemblyFilePath);
+
+                            // Lookup the containging project.
+                            if (containingProjectsByPackageIdentityName.ContainsKey(packageIdentityName))
+                            {
+                                var containingProjectFilePath = containingProjectsByPackageIdentityName[packageIdentityName];
+
+                                methodProjectReferences.Add(containingProjectFilePath);
+                            }
+                            else
+                            {
+                                var message = $"{packageIdentityName}: no containing project found for package identity name.";
+                                Console.WriteLine(message);
+                            }
+
+                            return;
+                        }
+
+                        // Else, throw an exception since we have no idea what to do!
+                        {
+                            var message = $"Unhandled metadata reference assembly:\n\t{metadataReferenceAssemblyFilePath}";
+                            Console.WriteLine(message);
+                            //throw new Exception();
+                        }
+                    }
+                    else
+                    {
+                        // No idea what to do with the metadata reference assembly.
+                        // This link: https://learn.microsoft.com/en-us/dotnet/api/microsoft.codeanalysis.metadatareference?view=roslyn-dotnet-4.3.0
+                        // Suggests there are three possibilities:
+                        //  1. Microsoft.CodeAnalysis.CompilationReference
+                        //  2. Microsoft.CodeAnalysis.PortableExecutableReference
+                        //  3. Microsoft.CodeAnalysis.UnresolvedMetadataReference
+                        var message = $"{metadataReference.Display}: metadata reference assembly was not a {nameof(PortableExecutableReference)}";
+                        Console.WriteLine(message);
+                        //throw new Exception(message);
+                    }
+                }
+            }
+
+            // Note: do *not* remove the target project itself!
+            // It is important to know that the selected method relies on methods within the target project
+            // (i.e. that the method cannot be severed from the target project without other methods first being severed).
+            // You will need to extricate the method as opposed to severing the method.
+
+            var lines = methodProjectReferences
+                .Get_Values()
+                .OrderAlphabetically()
+                ;
+
+            await Instances.FileOperator.WriteLines(
+                outputTextFilePath,
+                lines);
+
+            Instances.NotepadPlusPlusOperator.Open(outputTextFilePath);
+        }
+
         /// <summary>
         /// Select a method within a project, then use the semantic information for method invocations within that method to get a list of types used within the method.
         /// Then, foreach type, get the project file path (or NuGet package information, or project file path containing the NuGet package reference).
@@ -55,21 +392,46 @@ namespace R5T.E0070
 
                 var semanticModel = compilation.GetSemanticModel(method.SyntaxTree);
 
-                var memberAccesses = method.DescendantNodes()
+                var memberAccessSymbolInfos = method.DescendantNodes()
                     .OfType<MemberAccessExpressionSyntax>()
+                    .Select(memberAccess =>
+                    {
+                        var accessName = memberAccess.Name;
+
+                        var symbolInfo = semanticModel.GetSymbolInfo(accessName);
+                        return symbolInfo;
+                    })
                     ;
 
-                foreach (var memberAccess in memberAccesses)
+                var parameterSymbolInfos = method.DescendantNodes()
+                    .OfType<ParameterSyntax>()
+                    .Select(parameter =>
+                    {
+                        var typeName = parameter.Type;
+
+                        var symbolInfo = semanticModel.GetSymbolInfo(typeName);
+                        return symbolInfo;
+                    })
+                    ;
+
+                var symbolInfos = Instances.EnumerableOperator.From(
+                    memberAccessSymbolInfos,
+                    parameterSymbolInfos);
+
+                foreach (var symbolInfo in symbolInfos)
                 {
-                    var accessName = memberAccess.Name;
+                    ProcessSymbolInfo(symbolInfo);
+                }
 
-                    var symbolInfo = semanticModel.GetSymbolInfo(accessName);
+                void ProcessSymbolInfo(SymbolInfo symbolInfo)
+                {
+                    var symbol = symbolInfo.Symbol;
 
-                    var methodNameSymbol = symbolInfo.Symbol;
+                    var accessName = symbolInfo.Symbol.Name;
 
-                    var containingAssembly = methodNameSymbol.ContainingAssembly;
+                    var containingAssembly = symbol.ContainingAssembly;
 
-                    var methodLocation = methodNameSymbol.Locations.First();
+                    var methodLocation = symbol.Locations.First();
 
                     var isSource = methodLocation.IsInSource;
                     if (isSource)
@@ -102,6 +464,50 @@ namespace R5T.E0070
                         }
                     }
                 }
+
+                //foreach (var memberAccess in memberAccessSymbols)
+                //{
+                //    var accessName = memberAccess.Name;
+
+                //    var symbolInfo = semanticModel.GetSymbolInfo(accessName);
+
+                //    var methodNameSymbol = symbolInfo.Symbol;
+
+                //    var containingAssembly = methodNameSymbol.ContainingAssembly;
+
+                //    var methodLocation = methodNameSymbol.Locations.First();
+
+                //    var isSource = methodLocation.IsInSource;
+                //    if (isSource)
+                //    {
+                //        // This is it! Get the project for an assembly symbol!
+                //        var containingAssemblyProject = solution.GetProject(
+                //            containingAssembly);
+
+                //        var containingAssemblyProjectFilePath = containingAssemblyProject.FilePath;
+
+                //        Console.WriteLine($"{accessName}:\n\t{containingAssemblyProjectFilePath}");
+                //    }
+                //    else
+                //    {
+                //        var assemblyIdentity = containingAssembly.Identity;
+
+                //        Console.WriteLine($"{accessName}:\n\t{assemblyIdentity.Name} (assembly)");
+
+                //        // Since the location is not in source, it is not a project reference, and is thus an assembly reference.
+                //        // (Which is usually a NuGet package reference, but could just be an assembly.)
+                //        // (What about COM references?)
+                //        var metadataReference = compilation.GetMetadataReference(containingAssembly);
+
+                //        Console.WriteLine(metadataReference.Display);
+                //        Console.WriteLine(metadataReference.Properties.Kind);
+
+                //        if (metadataReference is PortableExecutableReference portableExecutableReference)
+                //        {
+                //            Console.WriteLine(portableExecutableReference.FilePath);
+                //        }
+                //    }
+                //}
             }
         }
 
