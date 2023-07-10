@@ -37,7 +37,7 @@ namespace R5T.E0070
                 //Instances.ExampleProjectPaths.Example_SimpleWithProjectReference
                 //Instances.ExampleProjectPaths.Example_SimpleWithNuGetPackageReference
                 //Instances.ExampleProjectPaths.Example_SimpleWithNuGetPackageProviderProjectReference
-                @"C:\Code\DEV\Git\GitHub\SafetyCone\R5T.O0026\source\R5T.O0026.Construction\R5T.O0026.Construction.csproj".ToProjectFilePath()
+                @"C:\Code\DEV\Git\GitHub\SafetyCone\R5T.E0071\source\R5T.E0071\R5T.E0071.csproj".ToProjectFilePath()
                 ;
             var outputTextFilePath =
                 Instances.Paths.OutputTextFilePath
@@ -47,10 +47,10 @@ namespace R5T.E0070
                 Instances.SyntaxOperations.Get_MethodOnType(
                     project,
                     //"Program"
-                    "IProjectFilePathDemonstrations"
+                    "IExperiments"
                     .ToTypeName_N1(),
                     //"Main"
-                    "Get_BackupProjectFilePath"
+                    "ConvertInheritdocElements"
                     .ToMethodName_N1()
                 );
 
@@ -226,6 +226,8 @@ namespace R5T.E0070
 
                 var parameterSymbolInfos = method.DescendantNodes()
                     .OfType<ParameterSyntax>()
+                    // Need for some reason, maybe foreach() invocations have null parameter types? (var parameters?)
+                    .Where(parameter => parameter.Type is not null)
                     .Select(parameter =>
                     {
                         var typeName = parameter.Type;
