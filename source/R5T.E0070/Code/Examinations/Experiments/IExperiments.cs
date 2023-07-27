@@ -37,7 +37,7 @@ namespace R5T.E0070
                 //Instances.ExampleProjectPaths.Example_SimpleWithProjectReference
                 //Instances.ExampleProjectPaths.Example_SimpleWithNuGetPackageReference
                 //Instances.ExampleProjectPaths.Example_SimpleWithNuGetPackageProviderProjectReference
-                @"C:\Code\DEV\Git\GitHub\SafetyCone\R5T.E0071\source\R5T.E0071\R5T.E0071.csproj".ToProjectFilePath()
+                @"C:\Code\DEV\Git\GitHub\SafetyCone\R5T.S0073\source\R5T.S0073\R5T.S0073.csproj".ToProjectFilePath()
                 ;
             var outputTextFilePath =
                 Instances.Paths.OutputTextFilePath
@@ -47,10 +47,10 @@ namespace R5T.E0070
                 Instances.SyntaxOperations.Get_MethodOnType(
                     project,
                     //"Program"
-                    "IExperiments"
+                    "IRepositoryScripts"
                     .ToTypeName_N1(),
                     //"Main"
-                    "ConvertInheritdocElements"
+                    "Create_Repository"
                     .ToMethodName_N1()
                 );
 
